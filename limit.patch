@@ -1,0 +1,108 @@
+diff --git a/controller/UserController.php b/controller/UserController.php
+index ea7a785..b2cee04 100644
+--- a/controller/UserController.php
++++ b/controller/UserController.php
+@@ -3009,6 +3009,43 @@ class UserController extends ControllerBusiness
+         return true;
+     }
+ 
++
++    /**
++     * 设置安保问题时发送手机验证码
++     * @param Array &$arr 表单提交数据(mobile)
++     */
++    public static function setSecureQuestionSmsCode(&$arr)
++    {
++        $arr = self::propFilter($arr, 'mobile');
++        // 检查用户登录
++        if (!self::$isLogin) {
++            return 'C_USER_NEED_LOGIN';
++        }
++        // 得到用户手机号
++        $bindmobile = BindMobileController::getBindedByUserID(self::$loginUserID);
++        if (!$bindmobile->isLoad) {
++            return 'C_USER_MOBILE_UNBIND';
++        }
++        $mobile = $bindmobile->address;
++        // 一分钟内不得重新发送
++        if (CacheHelper::isActionSmsCodeFeqLimit($mobile, CacheHelper::TYPE_SMS_SET_SECUREQUESTION_FEQ)) {
++            return 'C_USER_SMS_CODE_FREQUENT';
++        }
++        CacheHelper::setActionSmsCodeFeq($mobile, CacheHelper::TYPE_SMS_SET_SECUREQUESTION_FEQ, self::TIME_MINUTE );
++        // 发送超量推迟24小时
++        if (CacheHelper::isSmsCodeCntLimit($mobile)) {
++            return 'C_USER_SMS_CODE_LIMIT';
++        }
++        CacheHelper::incSmsCodeCnt($mobile);
++        // 设置手机验证码
++        $code = mt_rand(1000, 9999);
++        CacheHelper::setSmsCode($mobile, $code);
++        $arr['cache_code'] = $code;
++        // 发送手机验证码
++        return SmsWrapController::addSmsCode($mobile, $code);
++    }
++
++
+     /**
+      * 风控验证手机时发送手机验证码
+      * 配合sef::verifyMobile使用
+diff --git a/helper/CacheHelper.php b/helper/CacheHelper.php
+index bd16ad0..ba501c6 100644
+--- a/helper/CacheHelper.php
++++ b/helper/CacheHelper.php
+@@ -84,6 +84,9 @@ class CacheHelper
+     /** 类型标记: 支付密码验证次数 */
+     const TYPE_PAYHASH_VERIFY = 123;
+ 
++    /** 类型标记: 设置安保问题验证码发送频率标识 */
++    const TYPE_SMS_SET_SECUREQUESTION_FEQ = 131;
++
+     /** 常量: 手机号动态登陆时同手机发送动态码次数上限 */
+     const CNT_MOBILELOGIN_CODE_LIMIT = 8;
+     /** 常量: 手机号动态登陆时同IP同手机尝试登陆次数上限 */
+@@ -470,6 +473,19 @@ class CacheHelper
+         return self::exist($mobile, self::TYPE_SMS_CODE_FEQ);
+     }
+ 
++
++    /**
++     * 手机短信验证码发送否过于频繁
++     * @param Integer $mobile
++     * @param Integer $actionType  场景类型
++     * @return Boolean 是否超频
++     */
++    public static function isActionSmsCodeFeqLimit($mobile ,$actionType)
++    {
++        return self::exist($mobile, $actionType);
++    }
++
++
+     /**
+      * 手机短信验证码设置发送频率
+      *
+@@ -481,6 +497,12 @@ class CacheHelper
+         return self::setValue($mobile, self::TYPE_SMS_CODE_FEQ, 1, self::TIME_MINUTE);
+     }
+ 
++
++    public static function setActionSmsCodeFeq($mobile, $actionType, $timeType)
++    {
++        return self::setValue($mobile, $actionType, 1, $timeType);
++    }
++
+     /**
+      * 手机短信验证码发送次数
+      *
+diff --git a/mt/action/SecurequestionWww.php b/mt/action/SecurequestionWww.php
+index d90df57..54832f6 100644
+--- a/mt/action/SecurequestionWww.php
++++ b/mt/action/SecurequestionWww.php
+@@ -34,7 +34,7 @@ class SecurequestionWwwAction extends ControllerAction
+             $this->setRedirect('/account/security');
+         }
+         $arr = array();
+-        $ret = UserController::setSmsCode($arr);
++        $ret = UserController::setSecureQuestionSmsCode($arr);
+         //发送验证短信
+         $bindmobile = BindMobileController::getBindedByUserID(self::$loginUserID);
+         $mobile = $bindmobile->address;
